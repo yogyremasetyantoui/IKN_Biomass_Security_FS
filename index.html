@@ -4,485 +4,454 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Simulasi BEP — Rantai Pasok Biomassa IKN</title>
+
+  <!-- importmap: tells the browser where to find ES module packages -->
+  <script type="importmap">
+  {
+    "imports": {
+      "react":          "https://esm.sh/react@18.2.0",
+      "react-dom":      "https://esm.sh/react-dom@18.2.0",
+      "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+      "recharts":       "https://esm.sh/recharts@2.8.0"
+    }
+  }
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #080f1e; color: #e2e8f0; font-family: 'Syne', sans-serif; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #0f172a; }
-    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    .fade-in { animation: fadeIn .35s ease-out both; }
-    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
-    .sc-btn { transition: all .18s ease; cursor: pointer; border: none; font-family: 'IBM Plex Mono', monospace; }
-    .sc-btn:hover { transform: translateY(-2px); filter: brightness(1.15); }
-    .tab-btn { transition: color .15s; cursor: pointer; border: none; background: none; font-family: 'Syne', sans-serif; }
-    table { border-collapse: collapse; width: 100%; }
+    body  { background: #080f1e; color: #e2e8f0; font-family: 'Syne', sans-serif; }
+    ::-webkit-scrollbar        { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track  { background: #0f172a; }
+    ::-webkit-scrollbar-thumb  { background: #334155; border-radius: 3px; }
+    .fade { animation: fade .35s ease-out both; }
+    @keyframes fade { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+    button { cursor: pointer; }
+    table  { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #1e293b; }
-    #root { min-height: 100vh; }
   </style>
 </head>
 <body>
 <div id="root"></div>
 
-<!-- All dependencies load synchronously before our script runs -->
-<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
-<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
-<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-<script src="https://unpkg.com/recharts@2.8.0/umd/Recharts.js"></script>
-<!-- htm lets us write JSX-like syntax in plain JS — zero build step, zero compiler -->
-<script src="https://unpkg.com/htm@3.1.1/dist/htm.js"></script>
+<!-- type="module" is deferred by default — runs AFTER importmap is parsed -->
+<script type="module">
+import React, { useState, useEffect } from 'react';
+import { createRoot } from 'react-dom/client';
+import {
+  LineChart, Line, AreaChart, Area, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ReferenceLine, ResponsiveContainer
+} from 'recharts';
 
-<script>
-// ── SETUP ─────────────────────────────────────────────────────────────────
-const { useState, useEffect } = React;
-const html = htm.bind(React.createElement);
-const RC = window.Recharts;
-const LineChart = RC.LineChart, Line = RC.Line, XAxis = RC.XAxis, YAxis = RC.YAxis;
-const CartesianGrid = RC.CartesianGrid, Tooltip = RC.Tooltip, Legend = RC.Legend;
-const ReferenceLine = RC.ReferenceLine, ResponsiveContainer = RC.ResponsiveContainer;
-const AreaChart = RC.AreaChart, Area = RC.Area, BarChart = RC.BarChart, Bar = RC.Bar;
+const h = React.createElement;
 
-// ── DATA ──────────────────────────────────────────────────────────────────
-const GWH_PER_YEAR = 240000;
-const PPA_PRICE    = 1450;
-const REV_YR       = (GWH_PER_YEAR * PPA_PRICE) / 1000; // Rp juta/tahun
+// ── DATA ─────────────────────────────────────────────────────────────────
+const GWH   = 240000;   // MWh / tahun
+const PPA   = 1450;     // Rp / kWh
+const REV   = GWH * PPA / 1000; // Rp juta / tahun = 348.000
 
-const SCENARIOS = [
-  { id:"S0", label:"S0 — Bulk Baseline",     color:"#ef4444", capex:0,     capexPlant:390000, opexPerYear:312000, lossRate:.30, note:"Tidak layak — biaya produksi > pendapatan PPA",          viable:false, payback:null, irr:null, kwhCost:4750 },
-  { id:"S1", label:"S1 — Centralized Hub",   color:"#f59e0b", capex:15000, capexPlant:390000, opexPerYear:244000, lossRate:.05, note:"Layak — 1 hub pelleting terpusat dekat IKN",              viable:true,  payback:13,   irr:13,   kwhCost:1850 },
-  { id:"S2", label:"S2 — Decentralized Hub", color:"#3b82f6", capex:12000, capexPlant:390000, opexPerYear:256000, lossRate:.08, note:"Layak — 3 hub terdesentralisasi, semi-kering",            viable:true,  payback:15,   irr:11,   kwhCost:2050 },
-  { id:"S3", label:"S3 — Hybrid Optimal",    color:"#10b981", capex:45000, capexPlant:390000, opexPerYear:235000, lossRate:.04, note:"Sangat layak — sistem terintegrasi, efisiensi tertinggi", viable:true,  payback:11,   irr:16,   kwhCost:1620 },
+const SC = [
+  { id:'S0', label:'S0 — Bulk Baseline',     c:'#ef4444', capex:0,     plant:390000, opex:312000, loss:.30, viable:false, payback:null, irr:null,  kwh:4750, note:'Tidak layak — biaya produksi > pendapatan PPA' },
+  { id:'S1', label:'S1 — Centralized Hub',   c:'#f59e0b', capex:15000, plant:390000, opex:244000, loss:.05, viable:true,  payback:13,   irr:13,    kwh:1850, note:'Layak — 1 hub pelleting terpusat dekat IKN' },
+  { id:'S2', label:'S2 — Decentralized Hub', c:'#3b82f6', capex:12000, plant:390000, opex:256000, loss:.08, viable:true,  payback:15,   irr:11,    kwh:2050, note:'Layak — 3 hub terdesentralisasi, semi-kering' },
+  { id:'S3', label:'S3 — Hybrid Optimal',    c:'#10b981', capex:45000, plant:390000, opex:235000, loss:.04, viable:true,  payback:11,   irr:16,    kwh:1620, note:'Sangat layak — sistem terintegrasi, efisiensi tertinggi' },
 ];
 
-function genBEP(sc, years = 25) {
-  const cap = sc.capex + sc.capexPlant;
-  let cumCost = cap, cumRev = 0;
-  const out = [{ year:0, cumCost:+(cap/1000).toFixed(1), cumRevenue:0,
-    annualRevenue:0, annualCost:+(cap/1000).toFixed(1),
-    cashflow:+(-cap/1000).toFixed(1), cumCashflow:+(-cap/1000).toFixed(1) }];
-  for (let y = 1; y <= years; y++) {
-    cumCost += sc.opexPerYear; cumRev += REV_YR;
-    out.push({ year:y,
-      cumCost:+(cumCost/1000).toFixed(1), cumRevenue:+(cumRev/1000).toFixed(1),
-      annualRevenue:+(REV_YR/1000).toFixed(1), annualCost:+(sc.opexPerYear/1000).toFixed(1),
-      cashflow:+((REV_YR - sc.opexPerYear)/1000).toFixed(1),
-      cumCashflow:+((cumRev - cumCost)/1000).toFixed(1) });
+function bepRows(s, n=25) {
+  const cap = s.capex + s.plant;
+  let cc = cap, cr = 0;
+  const rows = [{ yr:0, cc:r1(cap/1e3), cr:0, ar:0, ac:r1(cap/1e3), cf:r1(-cap/1e3), ccf:r1(-cap/1e3) }];
+  for (let y=1;y<=n;y++) {
+    cc += s.opex; cr += REV;
+    rows.push({ yr:y, cc:r1(cc/1e3), cr:r1(cr/1e3),
+      ar:r1(REV/1e3), ac:r1(s.opex/1e3),
+      cf:r1((REV-s.opex)/1e3), ccf:r1((cr-cc)/1e3) });
   }
-  return out;
+  return rows;
 }
+const r1 = v => +v.toFixed(1);
 
-function genCompare() {
-  return Array.from({length:26}, (_,y) => {
-    const row = { year:y };
-    SCENARIOS.forEach(s => {
-      const cap = s.capex + s.capexPlant;
-      row[s.id] = y === 0 ? +(-cap/1000).toFixed(1)
-        : +((REV_YR*y - cap - s.opexPerYear*y)/1000).toFixed(1);
-    });
-    return row;
+function cmpData() {
+  return Array.from({length:26},(_,y) => {
+    const o={yr:y};
+    SC.forEach(s=>{ const cap=s.capex+s.plant;
+      o[s.id]= y===0 ? r1(-cap/1e3) : r1((REV*y - cap - s.opex*y)/1e3); });
+    return o;
   });
 }
 
-// ── SUB-COMPONENTS ────────────────────────────────────────────────────────
-function BEPTooltip({ active, payload, label, scenario }) {
-  if (!active || !payload || !payload.length) return null;
-  return html`<div style=${{ background:"#0f172a", border:"1px solid "+scenario.color+"55",
-    borderRadius:8, padding:"12px 16px", fontFamily:"'IBM Plex Mono',monospace", fontSize:12 }}>
-    <p style=${{ color:scenario.color, fontWeight:700, marginBottom:6 }}>Tahun ke-${label}</p>
-    ${payload.map(p => html`<p key=${p.dataKey} style=${{ color:p.color, margin:"2px 0" }}>
-      ${p.name}: <span style=${{ color:"#fff" }}>Rp ${p.value != null ? p.value.toLocaleString("id-ID") : ""} M</span>
-    </p>`)}
-  </div>`;
+const fmt = v => v != null ? 'Rp '+v.toLocaleString('id-ID')+' M' : '—';
+const idr = v => v != null ? v.toLocaleString('id-ID') : '—';
+
+// ── STYLES ────────────────────────────────────────────────────────────────
+const S = {
+  card: { background:'#0b1120', border:'1px solid #1e293b', borderRadius:12, padding:'20px 24px' },
+  mono: { fontFamily:"'IBM Plex Mono',monospace" },
+  label: { fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:'#475569', letterSpacing:2, textTransform:'uppercase', marginBottom:16 },
+  tip: { background:'#0f172a', border:'1px solid #33415588', borderRadius:8, padding:'12px 16px',
+         fontFamily:"'IBM Plex Mono',monospace", fontSize:12 },
+  tickStyle: { fill:'#64748b', fontSize:11 },
+};
+
+// ── TOOLTIP ───────────────────────────────────────────────────────────────
+function Tip({ active, payload, label, sc }) {
+  if (!active || !payload?.length) return null;
+  return h('div', { style:{ ...S.tip, border:`1px solid ${sc.c}55` } },
+    h('p', { style:{ color:sc.c, fontWeight:700, marginBottom:6 } }, `Tahun ke-${label}`),
+    ...payload.map(p => h('p', { key:p.dataKey, style:{ color:p.color, margin:'2px 0' } },
+      p.name+': ', h('span', { style:{ color:'#fff' } }, fmt(p.value))
+    ))
+  );
 }
 
-function MetricCard({ label, value, sub, color, icon }) {
-  return html`<div style=${{ background:"#0f172a", border:"1px solid "+color+"33", borderRadius:10,
-    padding:"14px 18px", flex:1, minWidth:128, position:"relative", overflow:"hidden" }}>
-    <div style=${{ position:"absolute", top:0, left:0, right:0, height:2,
-      background:"linear-gradient(90deg,"+color+",transparent)" }} />
-    <div style=${{ fontSize:20, marginBottom:4 }}>${icon}</div>
-    <div style=${{ color:"#94a3b8", fontSize:10, fontFamily:"'IBM Plex Mono',monospace",
-      letterSpacing:1, textTransform:"uppercase" }}>${label}</div>
-    <div style=${{ color, fontFamily:"'IBM Plex Mono',monospace", fontSize:17,
-      fontWeight:700, margin:"4px 0 2px" }}>${value}</div>
-    ${sub ? html`<div style=${{ color:"#64748b", fontSize:10 }}>${sub}</div>` : null}
-  </div>`;
+// ── CARD ──────────────────────────────────────────────────────────────────
+function Card({ title, children, mb=20 }) {
+  return h('div', { style:{ ...S.card, marginBottom:mb } },
+    title && h('div', { style:S.label }, title),
+    children
+  );
 }
 
-function Card({ title, children, mb }) {
-  return html`<div style=${{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12,
-    padding:"20px 24px", marginBottom: mb != null ? mb : 20 }}>
-    ${title ? html`<div style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10,
-      color:"#475569", letterSpacing:2, marginBottom:16, textTransform:"uppercase" }}>${title}</div>` : null}
-    ${children}
-  </div>`;
+// ── METRIC ────────────────────────────────────────────────────────────────
+function Metric({ icon, label, value, sub, c }) {
+  return h('div', { style:{ background:'#0f172a', border:`1px solid ${c}33`,
+    borderRadius:10, padding:'14px 18px', flex:1, minWidth:120, position:'relative', overflow:'hidden' } },
+    h('div', { style:{ position:'absolute', top:0, left:0, right:0, height:2,
+      background:`linear-gradient(90deg,${c},transparent)` } }),
+    h('div', { style:{ fontSize:18, marginBottom:4 } }, icon),
+    h('div', { style:{ ...S.mono, fontSize:10, color:'#94a3b8', letterSpacing:1, textTransform:'uppercase' } }, label),
+    h('div', { style:{ ...S.mono, fontSize:16, fontWeight:700, color:c, margin:'4px 0 2px' } }, value),
+    sub && h('div', { style:{ fontSize:10, color:'#64748b' } }, sub)
+  );
 }
 
-// ── TABS ──────────────────────────────────────────────────────────────────
-function TabIndividual({ active, key }) {
-  const bepData = genBEP(active);
-  const bepYear = active.viable ? (bepData.find(d => d.cumCashflow >= 0) || {}).year : null;
-  const gradId = "cfg" + active.id;
-  const mkTip = (p) => React.createElement(BEPTooltip, Object.assign({}, p, { scenario: active }));
+// ── INDIVIDUAL TAB ────────────────────────────────────────────────────────
+function TabInd({ sc }) {
+  const rows = bepRows(sc);
+  const bep  = sc.viable ? rows.find(r => r.ccf >= 0)?.yr : null;
+  const gid  = 'g'+sc.id;
+  const tip  = p => h(Tip, { ...p, sc });
 
-  return html`<div class="fade-in" key=${key}>
-    <div style=${{ display:"flex", justifyContent:"space-between", alignItems:"center",
-      marginBottom:20, flexWrap:"wrap", gap:10 }}>
-      <div>
-        <h2 style=${{ fontSize:18, fontWeight:700, color:active.color }}>${active.label}</h2>
-        <p style=${{ color:"#64748b", fontSize:12, marginTop:4 }}>${active.note}</p>
-      </div>
-      ${!active.viable ? html`<div style=${{ background:"#450a0a", border:"1px solid #ef444466",
-        borderRadius:8, padding:"8px 16px", fontFamily:"'IBM Plex Mono',monospace",
-        fontSize:11, color:"#fca5a5" }}>⚠ TIDAK LAYAK — Biaya produksi > tarif PPA</div>` : null}
-    </div>
+  return h('div', { className:'fade' },
+    h('div', { style:{ display:'flex', justifyContent:'space-between', flexWrap:'wrap',
+      gap:10, marginBottom:20 } },
+      h('div', null,
+        h('h2', { style:{ fontSize:18, fontWeight:700, color:sc.c } }, sc.label),
+        h('p',  { style:{ color:'#64748b', fontSize:12, marginTop:4 } }, sc.note)
+      ),
+      !sc.viable && h('div', { style:{ background:'#450a0a', border:'1px solid #ef444466',
+        borderRadius:8, padding:'8px 14px', ...S.mono, fontSize:11, color:'#fca5a5' } },
+        '⚠ TIDAK LAYAK — Biaya produksi > tarif PPA')
+    ),
 
-    <${Card} title="Pendapatan Kumulatif vs Biaya Kumulatif (Rp Miliar)">
-      <${ResponsiveContainer} width="100%" height=${300}>
-        <${LineChart} data=${bepData} margin=${{ top:10, right:30, left:10, bottom:10 }}>
-          <${CartesianGrid} strokeDasharray="3 3" stroke="#1e293b" />
-          <${XAxis} dataKey="year" stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            label=${{ value:"Tahun Operasi", position:"insideBottom", offset:-4, fill:"#475569", fontSize:11 }} />
-          <${YAxis} stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            tickFormatter=${v => v.toLocaleString("id-ID")+"M"} />
-          <${Tooltip} content=${mkTip} />
-          <${Legend} wrapperStyle=${{ fontSize:12, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
-          ${bepYear != null ? html`<${ReferenceLine} x=${bepYear} stroke=${active.color}
-            strokeDasharray="6 3" strokeWidth=${1.5}
-            label=${{ value:"BEP Th."+bepYear, position:"top", fill:active.color, fontSize:11 }} />` : null}
-          <${ReferenceLine} y=${0} stroke="#334155" strokeWidth=${1} />
-          <${Line} name="Pendapatan Kumulatif" dataKey="cumRevenue"
-            stroke="#10b981" strokeWidth=${2.5} dot=${false} activeDot=${{ r:5 }} />
-          <${Line} name="Biaya Kumulatif" dataKey="cumCost"
-            stroke=${active.color} strokeWidth=${2.5} dot=${false}
-            strokeDasharray=${active.id==="S0" ? "8 4" : "0"} activeDot=${{ r:5 }} />
-        </${LineChart}>
-      </${ResponsiveContainer}>
-    </${Card}>
+    h(Card, { title:'Pendapatan Kumulatif vs Biaya Kumulatif (Rp Miliar)' },
+      h(ResponsiveContainer, { width:'100%', height:300 },
+        h(LineChart, { data:rows, margin:{ top:10, right:30, left:10, bottom:10 } },
+          h(CartesianGrid, { strokeDasharray:'3 3', stroke:'#1e293b' }),
+          h(XAxis, { dataKey:'yr', stroke:'#334155', tick:S.tickStyle,
+            label:{ value:'Tahun Operasi', position:'insideBottom', offset:-4, fill:'#475569', fontSize:11 } }),
+          h(YAxis, { stroke:'#334155', tick:S.tickStyle, tickFormatter:v=>idr(v)+'M' }),
+          h(Tooltip, { content:tip }),
+          h(Legend, { wrapperStyle:{ ...S.mono, fontSize:12, color:'#94a3b8', paddingTop:12 } }),
+          bep != null && h(ReferenceLine, { x:bep, stroke:sc.c, strokeDasharray:'6 3', strokeWidth:1.5,
+            label:{ value:'BEP Th.'+bep, position:'top', fill:sc.c, fontSize:11 } }),
+          h(ReferenceLine, { y:0, stroke:'#334155' }),
+          h(Line, { name:'Pendapatan Kumulatif', dataKey:'cr', stroke:'#10b981',
+            strokeWidth:2.5, dot:false, activeDot:{ r:5 } }),
+          h(Line, { name:'Biaya Kumulatif', dataKey:'cc', stroke:sc.c,
+            strokeWidth:2.5, dot:false, strokeDasharray: sc.id==='S0'?'8 4':'0', activeDot:{ r:5 } })
+        )
+      )
+    ),
 
-    <${Card} title="Arus Kas Kumulatif Bersih (Rp Miliar)">
-      <${ResponsiveContainer} width="100%" height=${220}>
-        <${AreaChart} data=${bepData} margin=${{ top:10, right:30, left:10, bottom:10 }}>
-          <defs>
-            <linearGradient id=${gradId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%"  stopColor=${active.color} stopOpacity=${0.3} />
-              <stop offset="95%" stopColor=${active.color} stopOpacity=${0} />
-            </linearGradient>
-          </defs>
-          <${CartesianGrid} strokeDasharray="3 3" stroke="#1e293b" />
-          <${XAxis} dataKey="year" stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }} />
-          <${YAxis} stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            tickFormatter=${v => v.toLocaleString("id-ID")+"M"} />
-          <${Tooltip} content=${mkTip} />
-          <${ReferenceLine} y=${0} stroke="#ef444488" strokeWidth=${1.5} strokeDasharray="4 2" />
-          ${bepYear != null ? html`<${ReferenceLine} x=${bepYear}
-            stroke=${active.color} strokeDasharray="6 3" strokeWidth=${1.5} />` : null}
-          <${Area} name="Cashflow Kumulatif" dataKey="cumCashflow"
-            stroke=${active.color} strokeWidth=${2} fill=${"url(#"+gradId+")"} />
-        </${AreaChart}>
-      </${ResponsiveContainer}>
-    </${Card}>
-  </div>`;
+    h(Card, { title:'Arus Kas Kumulatif Bersih (Rp Miliar)', mb:0 },
+      h(ResponsiveContainer, { width:'100%', height:220 },
+        h(AreaChart, { data:rows, margin:{ top:10, right:30, left:10, bottom:10 } },
+          h('defs', null,
+            h('linearGradient', { id:gid, x1:'0', y1:'0', x2:'0', y2:'1' },
+              h('stop', { offset:'5%',  stopColor:sc.c, stopOpacity:0.3 }),
+              h('stop', { offset:'95%', stopColor:sc.c, stopOpacity:0 })
+            )
+          ),
+          h(CartesianGrid, { strokeDasharray:'3 3', stroke:'#1e293b' }),
+          h(XAxis, { dataKey:'yr', stroke:'#334155', tick:S.tickStyle }),
+          h(YAxis, { stroke:'#334155', tick:S.tickStyle, tickFormatter:v=>idr(v)+'M' }),
+          h(Tooltip, { content:tip }),
+          h(ReferenceLine, { y:0, stroke:'#ef444488', strokeWidth:1.5, strokeDasharray:'4 2' }),
+          bep != null && h(ReferenceLine, { x:bep, stroke:sc.c, strokeDasharray:'6 3', strokeWidth:1.5 }),
+          h(Area, { name:'Cashflow Kumulatif', dataKey:'ccf', stroke:sc.c,
+            strokeWidth:2, fill:`url(#${gid})` })
+        )
+      )
+    )
+  );
 }
 
-function TabCompare() {
-  const compareData = genCompare();
-  return html`<div class="fade-in" key="compare">
-    <h2 style=${{ fontSize:18, fontWeight:700, marginBottom:6, color:"#f1f5f9" }}>
-      Perbandingan Cashflow Kumulatif — 4 Skenario
-    </h2>
-    <p style=${{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
-      Di atas nol = kumulatif untung · Crossing nol = Break-Even Point
-    </p>
-    <${Card} title="Cashflow Kumulatif Semua Skenario (Rp Miliar)">
-      <${ResponsiveContainer} width="100%" height=${360}>
-        <${LineChart} data=${compareData} margin=${{ top:10, right:30, left:10, bottom:20 }}>
-          <${CartesianGrid} strokeDasharray="3 3" stroke="#1e293b" />
-          <${XAxis} dataKey="year" stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            label=${{ value:"Tahun Operasi", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
-          <${YAxis} stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            tickFormatter=${v => v.toLocaleString("id-ID")+"M"} />
-          <${Tooltip} formatter=${(v,n) => ["Rp "+v.toLocaleString("id-ID")+" M", n]}
-            contentStyle=${{ background:"#0f172a", border:"1px solid #334155", fontFamily:"IBM Plex Mono", fontSize:11 }}
-            labelStyle=${{ color:"#94a3b8" }} />
-          <${Legend} wrapperStyle=${{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
-          <${ReferenceLine} y=${0} stroke="#475569" strokeWidth=${1.5} strokeDasharray="5 3" />
-          ${SCENARIOS.map(s => html`<${Line} key=${s.id} name=${s.label} dataKey=${s.id}
-            stroke=${s.color} strokeWidth=${s.id==="S3" ? 3 : 2} dot=${false}
-            strokeDasharray=${s.id==="S0" ? "8 4" : "0"} activeDot=${{ r:4 }} />`)}
-        </${LineChart}>
-      </${ResponsiveContainer}>
-    </${Card}>
-    <div style=${{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12 }}>
-      ${SCENARIOS.map(s => {
-        const d = genBEP(s);
-        const bep = (d.find(x => x.cumCashflow >= 0) || {}).year;
-        const cf25 = d[25] ? d[25].cumCashflow : null;
-        return html`<div key=${s.id} style=${{ background:"#0b1120", borderRadius:10,
-          padding:16, borderTop:"3px solid "+s.color, border:"1px solid "+s.color+"33" }}>
-          <div style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11,
-            color:s.color, fontWeight:700, marginBottom:10 }}>${s.label}</div>
-          ${[["BEP", bep != null ? "Tahun "+bep : "Tidak tercapai"],
-             ["CF Th.25", cf25 != null ? "Rp "+cf25.toLocaleString("id-ID")+" M" : "—"],
-             ["IRR", s.irr ? s.irr+"%" : "Negatif"],
-             ["Loss", (s.lossRate*100).toFixed(0)+"%"]
-          ].map(([k,v]) => html`<div key=${k} style=${{ display:"flex",
-            justifyContent:"space-between", marginBottom:4 }}>
-            <span style=${{ color:"#475569", fontFamily:"IBM Plex Mono", fontSize:10 }}>${k}</span>
-            <span style=${{ color:s.viable?"#e2e8f0":"#ef4444",
-              fontFamily:"IBM Plex Mono", fontSize:10, fontWeight:700 }}>${v}</span>
-          </div>`)}
-        </div>`;
-      })}
-    </div>
-  </div>`;
+// ── COMPARE TAB ───────────────────────────────────────────────────────────
+function TabCmp() {
+  const data = cmpData();
+  return h('div', { className:'fade' },
+    h('h2', { style:{ fontSize:18, fontWeight:700, marginBottom:6, color:'#f1f5f9' } },
+      'Perbandingan Cashflow Kumulatif — 4 Skenario'),
+    h('p', { style:{ ...S.mono, color:'#64748b', fontSize:12, marginBottom:20 } },
+      'Di atas nol = kumulatif untung · Crossing nol = Break-Even Point'),
+
+    h(Card, { title:'Cashflow Kumulatif Semua Skenario (Rp Miliar)' },
+      h(ResponsiveContainer, { width:'100%', height:360 },
+        h(LineChart, { data, margin:{ top:10, right:30, left:10, bottom:20 } },
+          h(CartesianGrid, { strokeDasharray:'3 3', stroke:'#1e293b' }),
+          h(XAxis, { dataKey:'yr', stroke:'#334155', tick:S.tickStyle,
+            label:{ value:'Tahun Operasi', position:'insideBottom', offset:-8, fill:'#475569', fontSize:11 } }),
+          h(YAxis, { stroke:'#334155', tick:S.tickStyle, tickFormatter:v=>idr(v)+'M' }),
+          h(Tooltip, { formatter:(v,n)=>[fmt(v),n],
+            contentStyle:{ ...S.tip }, labelStyle:{ color:'#94a3b8' } }),
+          h(Legend, { wrapperStyle:{ ...S.mono, fontSize:11, color:'#94a3b8', paddingTop:12 } }),
+          h(ReferenceLine, { y:0, stroke:'#475569', strokeWidth:1.5, strokeDasharray:'5 3' }),
+          ...SC.map(s => h(Line, { key:s.id, name:s.label, dataKey:s.id,
+            stroke:s.c, strokeWidth:s.id==='S3'?3:2, dot:false,
+            strokeDasharray:s.id==='S0'?'8 4':'0', activeDot:{ r:4 } }))
+        )
+      )
+    ),
+
+    h('div', { style:{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(200px,1fr))', gap:12 } },
+      ...SC.map(s => {
+        const rows = bepRows(s);
+        const bep  = rows.find(r => r.ccf >= 0)?.yr;
+        const cf25 = rows[25]?.ccf;
+        return h('div', { key:s.id, style:{ background:'#0b1120', borderRadius:10, padding:16,
+          border:`1px solid ${s.c}33`, borderTop:`3px solid ${s.c}` } },
+          h('div', { style:{ ...S.mono, fontSize:11, color:s.c, fontWeight:700, marginBottom:10 } }, s.label),
+          ...[['BEP', bep!=null?'Tahun '+bep:'Tidak tercapai'],
+              ['CF Th.25', cf25!=null?'Rp '+cf25.toLocaleString('id-ID')+' M':'—'],
+              ['IRR', s.irr?s.irr+'%':'Negatif'],
+              ['Loss',(s.loss*100).toFixed(0)+'%']
+          ].map(([k,v]) => h('div', { key:k, style:{ display:'flex', justifyContent:'space-between', marginBottom:4 } },
+            h('span', { style:{ ...S.mono, fontSize:10, color:'#475569' } }, k),
+            h('span', { style:{ ...S.mono, fontSize:10, fontWeight:700, color:s.viable?'#e2e8f0':'#ef4444' } }, v)
+          ))
+        );
+      })
+    )
+  );
 }
 
-function TabAnnual({ active, key }) {
-  const bepData = genBEP(active);
-  return html`<div class="fade-in" key=${key}>
-    <h2 style=${{ fontSize:18, fontWeight:700, marginBottom:6, color:active.color }}>${active.label}</h2>
-    <p style=${{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
-      Pendapatan PPA vs OPEX tahunan (Rp Miliar)
-    </p>
-    <${Card} title="Pendapatan vs Biaya Operasional per Tahun">
-      <${ResponsiveContainer} width="100%" height=${300}>
-        <${BarChart} data=${bepData.slice(1)} margin=${{ top:10, right:30, left:10, bottom:20 }}>
-          <${CartesianGrid} strokeDasharray="3 3" stroke="#1e293b" vertical=${false} />
-          <${XAxis} dataKey="year" stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            label=${{ value:"Tahun Operasi", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
-          <${YAxis} stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            tickFormatter=${v => v+"M"} />
-          <${Tooltip} contentStyle=${{ background:"#0f172a", border:"1px solid #334155",
-              fontFamily:"IBM Plex Mono", fontSize:11 }}
-            formatter=${(v,n) => ["Rp "+v.toLocaleString("id-ID")+" M", n]}
-            labelStyle=${{ color:"#94a3b8" }} />
-          <${Legend} wrapperStyle=${{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
-          <${Bar} name="Pendapatan Tahunan" dataKey="annualRevenue"
-            fill="#10b98122" stroke="#10b981" strokeWidth=${1} radius=${[3,3,0,0]} />
-          <${Bar} name="Biaya Operasional" dataKey="annualCost"
-            fill=${active.color+"22"} stroke=${active.color} strokeWidth=${1} radius=${[3,3,0,0]} />
-        </${BarChart}>
-      </${ResponsiveContainer}>
-    </${Card}>
-    <${Card} title="Surplus / Defisit Tahunan (Rp Miliar)">
-      <div style=${{ display:"flex", gap:8, flexWrap:"wrap" }}>
-        ${bepData.slice(1).map(d => {
-          const pos = d.cashflow >= 0;
-          return html`<div key=${d.year} style=${{
-            background: pos?"#052e16":"#450a0a",
-            border:"1px solid "+(pos?"#10b98144":"#ef444444"),
-            borderRadius:6, padding:"6px 10px", minWidth:62, textAlign:"center" }}>
-            <div style=${{ fontFamily:"IBM Plex Mono", fontSize:9, color:"#475569" }}>Th.${d.year}</div>
-            <div style=${{ fontFamily:"IBM Plex Mono", fontSize:10, fontWeight:700,
-              color:pos?"#10b981":"#ef4444" }}>
-              ${pos?"+":""}${d.cashflow != null ? d.cashflow.toLocaleString("id-ID") : ""}M
-            </div>
-          </div>`;
-        })}
-      </div>
-    </${Card}>
-  </div>`;
+// ── ANNUAL TAB ────────────────────────────────────────────────────────────
+function TabAnn({ sc }) {
+  const rows = bepRows(sc);
+  return h('div', { className:'fade' },
+    h('h2', { style:{ fontSize:18, fontWeight:700, marginBottom:6, color:sc.c } }, sc.label),
+    h('p', { style:{ ...S.mono, color:'#64748b', fontSize:12, marginBottom:20 } },
+      'Pendapatan PPA vs OPEX tahunan'),
+
+    h(Card, { title:'Pendapatan vs Biaya Operasional per Tahun (Rp Miliar)' },
+      h(ResponsiveContainer, { width:'100%', height:300 },
+        h(BarChart, { data:rows.slice(1), margin:{ top:10, right:30, left:10, bottom:20 } },
+          h(CartesianGrid, { strokeDasharray:'3 3', stroke:'#1e293b', vertical:false }),
+          h(XAxis, { dataKey:'yr', stroke:'#334155', tick:S.tickStyle,
+            label:{ value:'Tahun Operasi', position:'insideBottom', offset:-8, fill:'#475569', fontSize:11 } }),
+          h(YAxis, { stroke:'#334155', tick:S.tickStyle, tickFormatter:v=>v+'M' }),
+          h(Tooltip, { contentStyle:S.tip, formatter:(v,n)=>[fmt(v),n], labelStyle:{ color:'#94a3b8' } }),
+          h(Legend, { wrapperStyle:{ ...S.mono, fontSize:11, color:'#94a3b8', paddingTop:12 } }),
+          h(Bar, { name:'Pendapatan Tahunan', dataKey:'ar', fill:'#10b98122',
+            stroke:'#10b981', strokeWidth:1, radius:[3,3,0,0] }),
+          h(Bar, { name:'Biaya Operasional',  dataKey:'ac', fill:sc.c+'22',
+            stroke:sc.c, strokeWidth:1, radius:[3,3,0,0] })
+        )
+      )
+    ),
+
+    h(Card, { title:'Surplus / Defisit Tahunan (Rp Miliar)', mb:0 },
+      h('div', { style:{ display:'flex', gap:8, flexWrap:'wrap' } },
+        ...rows.slice(1).map(d => {
+          const pos = d.cf >= 0;
+          return h('div', { key:d.yr, style:{ background:pos?'#052e16':'#450a0a',
+            border:`1px solid ${pos?'#10b98144':'#ef444444'}`,
+            borderRadius:6, padding:'6px 10px', minWidth:62, textAlign:'center' } },
+            h('div', { style:{ ...S.mono, fontSize:9, color:'#475569' } }, 'Th.'+d.yr),
+            h('div', { style:{ ...S.mono, fontSize:10, fontWeight:700, color:pos?'#10b981':'#ef4444' } },
+              (pos?'+':'')+idr(d.cf)+'M')
+          );
+        })
+      )
+    )
+  );
 }
 
-function TabSensitivity() {
-  const PPA_RANGE = [1100,1200,1300,1350,1450,1550,1650,1800,1900];
-  const sensData = PPA_RANGE.map(ppa => {
-    const row = { ppa };
-    SCENARIOS.filter(s => s.viable).forEach(s => {
-      const rev = (GWH_PER_YEAR * ppa) / 1000;
-      const cap = s.capex + s.capexPlant;
-      row[s.id] = rev > s.opexPerYear
-        ? Math.min(Math.ceil(cap / (rev - s.opexPerYear)), 26) : 27;
+// ── SENSITIVITY TAB ───────────────────────────────────────────────────────
+function TabSens() {
+  const PPA_R = [1100,1200,1300,1350,1450,1550,1650,1800,1900];
+  const viable = SC.filter(s => s.viable);
+  const sens = PPA_R.map(ppa => {
+    const o = { ppa };
+    viable.forEach(s => {
+      const rev = GWH * ppa / 1000, cap = s.capex + s.plant;
+      o[s.id] = rev > s.opex ? Math.min(Math.ceil(cap/(rev-s.opex)), 26) : 27;
     });
-    return row;
+    return o;
   });
-  return html`<div class="fade-in" key="sensitivity">
-    <h2 style=${{ fontSize:18, fontWeight:700, marginBottom:6, color:"#f1f5f9" }}>
-      Sensitivitas BEP terhadap Harga PPA (Rp/kWh)
-    </h2>
-    <p style=${{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
-      Variasi PPA Rp 1.100–1.900/kWh · Garis merah = baseline Rp 1.450/kWh
-    </p>
-    <${Card} title="BEP Tahun ke-N berdasarkan Harga PPA">
-      <${ResponsiveContainer} width="100%" height=${300}>
-        <${LineChart} data=${sensData} margin=${{ top:10, right:30, left:10, bottom:20 }}>
-          <${CartesianGrid} strokeDasharray="3 3" stroke="#1e293b" />
-          <${XAxis} dataKey="ppa" stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            tickFormatter=${v => "Rp "+v}
-            label=${{ value:"Harga PPA (Rp/kWh)", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
-          <${YAxis} stroke="#334155" tick=${{ fill:"#64748b", fontSize:11 }}
-            domain=${[0,28]} tickFormatter=${v => v > 25 ? ">25" : v} />
-          <${Tooltip} contentStyle=${{ background:"#0f172a", border:"1px solid #334155",
-              fontFamily:"IBM Plex Mono", fontSize:11 }}
-            formatter=${v => [v > 25 ? "Tidak tercapai" : "Tahun "+v, ""]}
-            labelFormatter=${v => "PPA: Rp "+v+"/kWh"}
-            labelStyle=${{ color:"#94a3b8" }} />
-          <${Legend} wrapperStyle=${{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
-          <${ReferenceLine} x=${1450} stroke="#ef4444" strokeDasharray="6 3" strokeWidth=${1.5}
-            label=${{ value:"Baseline", position:"top", fill:"#ef4444", fontSize:10 }} />
-          <${ReferenceLine} y=${25} stroke="#334155" strokeDasharray="4 2" strokeWidth=${1} />
-          ${SCENARIOS.filter(s => s.viable).map(s => html`
-            <${Line} key=${s.id} name=${s.label} dataKey=${s.id}
-              stroke=${s.color} strokeWidth=${2.5} dot=${{ r:3, fill:s.color }} />`)}
-        </${LineChart}>
-      </${ResponsiveContainer}>
-    </${Card}>
-    <div style=${{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12, overflow:"hidden" }}>
-      <table>
-        <thead>
-          <tr style=${{ background:"#0d1f3c" }}>
-            <th style=${{ padding:"12px 16px", textAlign:"left", fontFamily:"IBM Plex Mono",
-              fontSize:11, color:"#64748b", fontWeight:500 }}>PPA (Rp/kWh)</th>
-            ${SCENARIOS.filter(s => s.viable).map(s => html`
-              <th key=${s.id} style=${{ padding:"12px 16px", textAlign:"center",
-                fontFamily:"IBM Plex Mono", fontSize:11, color:s.color, fontWeight:700 }}>${s.id}</th>`)}
-          </tr>
-        </thead>
-        <tbody>
-          ${PPA_RANGE.map((ppa, ri) => {
-            const hl = ppa === 1450;
-            return html`<tr key=${ppa} style=${{
-              background: hl ? "#1e293b" : ri%2===0 ? "#090f1b" : "#0b1120",
-              borderLeft: hl ? "3px solid #ef4444" : "3px solid transparent" }}>
-              <td style=${{ padding:"10px 16px", fontFamily:"IBM Plex Mono", fontSize:11,
-                color:hl?"#ef4444":"#94a3b8", fontWeight:hl?700:400 }}>
-                Rp ${ppa.toLocaleString("id-ID")}${hl?" ← baseline":""}
-              </td>
-              ${SCENARIOS.filter(s => s.viable).map(s => {
-                const rev = (GWH_PER_YEAR * ppa) / 1000;
-                const cap = s.capex + s.capexPlant;
-                const bepY = rev > s.opexPerYear ? Math.ceil(cap/(rev-s.opexPerYear)) : null;
-                const ok = bepY && bepY <= 25;
-                return html`<td key=${s.id} style=${{ padding:"10px 16px", textAlign:"center",
-                  fontFamily:"IBM Plex Mono", fontSize:11,
-                  color:ok?s.color:"#475569", fontWeight:ok?700:400 }}>
-                  ${ok ? "Th. "+bepY : ">25 th"}
-                </td>`;
-              })}
-            </tr>`;
-          })}
-        </tbody>
-      </table>
-    </div>
-  </div>`;
+
+  const getBEP = (s, ppa) => {
+    const rev = GWH * ppa / 1000, cap = s.capex + s.plant;
+    const y = rev > s.opex ? Math.ceil(cap/(rev-s.opex)) : null;
+    return y && y <= 25 ? y : null;
+  };
+
+  return h('div', { className:'fade' },
+    h('h2', { style:{ fontSize:18, fontWeight:700, marginBottom:6, color:'#f1f5f9' } },
+      'Sensitivitas BEP terhadap Harga PPA'),
+    h('p', { style:{ ...S.mono, color:'#64748b', fontSize:12, marginBottom:20 } },
+      'Variasi Rp 1.100–1.900/kWh · Garis merah = baseline Rp 1.450/kWh'),
+
+    h(Card, { title:'BEP Tahun ke-N berdasarkan Harga PPA' },
+      h(ResponsiveContainer, { width:'100%', height:300 },
+        h(LineChart, { data:sens, margin:{ top:10, right:30, left:10, bottom:20 } },
+          h(CartesianGrid, { strokeDasharray:'3 3', stroke:'#1e293b' }),
+          h(XAxis, { dataKey:'ppa', stroke:'#334155', tick:S.tickStyle,
+            tickFormatter:v=>'Rp '+v,
+            label:{ value:'Harga PPA (Rp/kWh)', position:'insideBottom', offset:-8, fill:'#475569', fontSize:11 } }),
+          h(YAxis, { stroke:'#334155', tick:S.tickStyle, domain:[0,28],
+            tickFormatter:v=>v>25?'>25':v }),
+          h(Tooltip, { contentStyle:S.tip,
+            formatter:v=>[v>25?'Tidak tercapai':'Tahun '+v,''],
+            labelFormatter:v=>'PPA: Rp '+v+'/kWh', labelStyle:{ color:'#94a3b8' } }),
+          h(Legend, { wrapperStyle:{ ...S.mono, fontSize:11, color:'#94a3b8', paddingTop:12 } }),
+          h(ReferenceLine, { x:1450, stroke:'#ef4444', strokeDasharray:'6 3', strokeWidth:1.5,
+            label:{ value:'Baseline', position:'top', fill:'#ef4444', fontSize:10 } }),
+          h(ReferenceLine, { y:25, stroke:'#334155', strokeDasharray:'4 2' }),
+          ...viable.map(s => h(Line, { key:s.id, name:s.label, dataKey:s.id,
+            stroke:s.c, strokeWidth:2.5, dot:{ r:3, fill:s.c } }))
+        )
+      )
+    ),
+
+    h('div', { style:{ ...S.card, overflow:'hidden', padding:0 } },
+      h('table', null,
+        h('thead', null, h('tr', { style:{ background:'#0d1f3c' } },
+          h('th', { style:{ padding:'12px 16px', textAlign:'left', ...S.mono, fontSize:11, color:'#64748b', fontWeight:500 } }, 'PPA (Rp/kWh)'),
+          ...viable.map(s => h('th', { key:s.id, style:{ padding:'12px 16px', textAlign:'center',
+            ...S.mono, fontSize:11, color:s.c, fontWeight:700 } }, s.id))
+        )),
+        h('tbody', null,
+          ...PPA_R.map((ppa,ri) => {
+            const hl = ppa===1450;
+            return h('tr', { key:ppa, style:{ background:hl?'#1e293b':ri%2===0?'#090f1b':'#0b1120',
+              borderLeft:hl?'3px solid #ef4444':'3px solid transparent' } },
+              h('td', { style:{ padding:'10px 16px', ...S.mono, fontSize:11,
+                color:hl?'#ef4444':'#94a3b8', fontWeight:hl?700:400 } },
+                'Rp '+ppa.toLocaleString('id-ID')+(hl?' ← baseline':'')),
+              ...viable.map(s => {
+                const y = getBEP(s, ppa);
+                return h('td', { key:s.id, style:{ padding:'10px 16px', textAlign:'center',
+                  ...S.mono, fontSize:11, color:y?s.c:'#475569', fontWeight:y?700:400 } },
+                  y ? 'Th. '+y : '>25 th');
+              })
+            );
+          })
+        )
+      )
+    )
+  );
 }
 
 // ── APP ───────────────────────────────────────────────────────────────────
 function App() {
-  const [active, setActive] = useState(SCENARIOS[3]);
-  const [tab, setTab]       = useState("individual");
-  const [key, setKey]       = useState(0);
-  useEffect(() => { setKey(k => k+1); }, [active]);
+  const [sc,  setSc]  = useState(SC[3]);
+  const [tab, setTab] = useState('individual');
+  const [k,   setK]   = useState(0);
+  useEffect(() => { setK(x => x+1); }, [sc]);
 
   const TABS = [
-    { k:"individual",  l:"Analisis per Skenario" },
-    { k:"compare",     l:"Perbandingan 4 Skenario" },
-    { k:"annual",      l:"Arus Kas Tahunan" },
-    { k:"sensitivity", l:"Sensitivitas PPA" },
+    { id:'individual',  label:'Analisis per Skenario' },
+    { id:'compare',     label:'Perbandingan 4 Skenario' },
+    { id:'annual',      label:'Arus Kas Tahunan' },
+    { id:'sensitivity', label:'Sensitivitas PPA' },
   ];
 
-  return html`<div style=${{ background:"#080f1e", minHeight:"100vh", paddingBottom:40 }}>
+  const bep = sc.viable ? bepRows(sc).find(r => r.ccf >= 0)?.yr : null;
 
-    <!-- HEADER -->
-    <div style=${{ background:"linear-gradient(135deg,#0d1f3c,#0a1628 60%,#080f1e)",
-      borderBottom:"1px solid #1e293b", padding:"28px 32px 22px" }}>
-      <div style=${{ display:"flex", justifyContent:"space-between",
-        alignItems:"flex-start", flexWrap:"wrap", gap:16 }}>
-        <div>
-          <div style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10,
-            color:"#10b981", letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>
-            Studi Kelayakan · Rantai Pasok Biomassa IKN
-          </div>
-          <h1 style=${{ fontSize:26, fontWeight:800, lineHeight:1.2, color:"#f1f5f9" }}>
-            Simulasi Break-Even Point
-          </h1>
-          <p style=${{ color:"#64748b", fontSize:13, marginTop:6,
-            fontFamily:"'IBM Plex Mono',monospace" }}>
-            PLTB 30 MW · 240 GWh/tahun · PPA Rp 1.450/kWh · Horizon 25 Tahun
-          </p>
-        </div>
-        <div style=${{ background:"#0f172a", border:"1px solid #1e3a5f",
-          borderRadius:10, padding:"10px 18px", textAlign:"right" }}>
-          <div style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9,
-            color:"#475569", letterSpacing:2 }}>KAPASITAS TARGET</div>
-          <div style=${{ fontSize:22, fontWeight:800, color:"#10b981" }}>30 MW</div>
-          <div style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10,
-            color:"#3b82f6" }}>IKN · Kalimantan Timur</div>
-        </div>
-      </div>
-      <div style=${{ display:"flex", gap:10, marginTop:22, flexWrap:"wrap" }}>
-        ${SCENARIOS.map(s => html`
-          <button key=${s.id} class="sc-btn" onClick=${() => setActive(s)}
-            style=${{ padding:"8px 18px", borderRadius:8,
-              border:"1.5px solid "+(active.id===s.id ? s.color : "#1e293b"),
-              background: active.id===s.id ? s.color+"18" : "#0f172a",
-              color: active.id===s.id ? s.color : "#64748b",
-              fontSize:11, fontWeight:700, letterSpacing:.5 }}>
-            ${s.id==="S0"?"⚠ ":s.id==="S3"?"★ ":"● "}${s.id}
-          </button>`)}
-      </div>
-    </div>
+  return h('div', { style:{ background:'#080f1e', minHeight:'100vh', paddingBottom:40 } },
 
-    <!-- METRICS -->
-    <div class="fade-in" key=${"m"+key}
-      style=${{ display:"flex", gap:12, padding:"20px 32px",
-        flexWrap:"wrap", borderBottom:"1px solid #1e293b" }}>
-      <${MetricCard} icon="💰" label="Biaya Produksi"
-        value=${"Rp "+active.kwhCost.toLocaleString("id-ID")} sub="per kWh" color=${active.color} />
-      <${MetricCard} icon="📉" label="Loss Rate"
-        value=${(active.lossRate*100).toFixed(0)+"%"} sub="rantai pasok" color=${active.color} />
-      <${MetricCard} icon="⏱" label="Payback"
-        value=${active.payback ? active.payback+" tahun" : "N/A"} sub="base case" color=${active.color} />
-      <${MetricCard} icon="📈" label="IRR"
-        value=${active.irr ? active.irr+"%" : "Negatif"} sub="25 tahun" color=${active.color} />
-      <${MetricCard} icon="🏭" label="Total CAPEX"
-        value=${"Rp "+((active.capex+active.capexPlant)/1000).toFixed(0)+" M"}
-        sub="pembangkit+infrastruktur" color=${active.color} />
-      <${MetricCard} icon="📊" label="BEP"
-        value=${genBEP(active).find ? (genBEP(active).find(d=>d.cumCashflow>=0)||{}).year
-          ? "Tahun "+(genBEP(active).find(d=>d.cumCashflow>=0)||{}).year : "N/A" : "N/A"}
-        sub="titik balik kumulatif" color=${active.color} />
-    </div>
+    // HEADER
+    h('div', { style:{ background:'linear-gradient(135deg,#0d1f3c,#0a1628 60%,#080f1e)',
+      borderBottom:'1px solid #1e293b', padding:'28px 32px 22px' } },
 
-    <!-- TABS NAV -->
-    <div style=${{ display:"flex", padding:"0 32px",
-      borderBottom:"1px solid #1e293b", overflowX:"auto" }}>
-      ${TABS.map(t => html`
-        <button key=${t.k} class="tab-btn" onClick=${() => setTab(t.k)}
-          style=${{ padding:"14px 18px", fontSize:12, fontWeight:600, whiteSpace:"nowrap",
-            color: tab===t.k ? active.color : "#475569",
-            borderBottom: tab===t.k ? "2px solid "+active.color : "2px solid transparent",
-            marginBottom:-1 }}>
-          ${t.l}
-        </button>`)}
-    </div>
+      h('div', { style:{ display:'flex', justifyContent:'space-between',
+        alignItems:'flex-start', flexWrap:'wrap', gap:16 } },
+        h('div', null,
+          h('div', { style:{ ...S.mono, fontSize:10, color:'#10b981',
+            letterSpacing:3, textTransform:'uppercase', marginBottom:8 } },
+            'Studi Kelayakan · Rantai Pasok Biomassa IKN'),
+          h('h1', { style:{ fontSize:26, fontWeight:800, lineHeight:1.2, color:'#f1f5f9' } },
+            'Simulasi Break-Even Point'),
+          h('p', { style:{ ...S.mono, color:'#64748b', fontSize:13, marginTop:6 } },
+            'PLTB 30 MW · 240 GWh/tahun · PPA Rp 1.450/kWh · Horizon 25 Tahun')
+        ),
+        h('div', { style:{ background:'#0f172a', border:'1px solid #1e3a5f',
+          borderRadius:10, padding:'10px 18px', textAlign:'right' } },
+          h('div', { style:{ ...S.mono, fontSize:9, color:'#475569', letterSpacing:2 } }, 'KAPASITAS'),
+          h('div', { style:{ fontSize:22, fontWeight:800, color:'#10b981' } }, '30 MW'),
+          h('div', { style:{ ...S.mono, fontSize:10, color:'#3b82f6' } }, 'IKN · Kalimantan Timur')
+        )
+      ),
 
-    <!-- TAB BODY -->
-    <div style=${{ padding:"28px 32px" }}>
-      ${tab==="individual"  && React.createElement(TabIndividual,  { active, key:"i"+key })}
-      ${tab==="compare"     && React.createElement(TabCompare,     { key:"compare" })}
-      ${tab==="annual"      && React.createElement(TabAnnual,      { active, key:"a"+key })}
-      ${tab==="sensitivity" && React.createElement(TabSensitivity, { key:"sensitivity" })}
-    </div>
+      h('div', { style:{ display:'flex', gap:10, marginTop:22, flexWrap:'wrap' } },
+        ...SC.map(s => h('button', { key:s.id, onClick:()=>setSc(s), style:{
+          padding:'8px 18px', borderRadius:8, fontSize:11, fontWeight:700,
+          letterSpacing:.5, transition:'all .18s',
+          border:`1.5px solid ${sc.id===s.id ? s.c : '#1e293b'}`,
+          background: sc.id===s.id ? s.c+'18' : '#0f172a',
+          color: sc.id===s.id ? s.c : '#64748b'
+        } }, (s.id==='S0'?'⚠ ':s.id==='S3'?'★ ':'● ')+s.id))
+      )
+    ),
 
-    <!-- FOOTER -->
-    <div style=${{ padding:"0 32px" }}>
-      <div style=${{ borderTop:"1px solid #1e293b", paddingTop:16,
-        display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
-        <span style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#334155" }}>
-          Semua angka adalah estimasi akademik — validasi lapangan diperlukan
-        </span>
-        <span style=${{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#334155" }}>
-          Ref: RUPTL PLN 2025–2034 · Disbun KalTim 2023 · Otorita IKN 2024
-        </span>
-      </div>
-    </div>
-  </div>`;
+    // METRICS
+    h('div', { key:'m'+k, className:'fade', style:{ display:'flex', gap:12,
+      padding:'20px 32px', flexWrap:'wrap', borderBottom:'1px solid #1e293b' } },
+      h(Metric, { icon:'💰', label:'Biaya Produksi', value:'Rp '+sc.kwh.toLocaleString('id-ID'), sub:'per kWh', c:sc.c }),
+      h(Metric, { icon:'📉', label:'Loss Rate',      value:(sc.loss*100).toFixed(0)+'%', sub:'rantai pasok', c:sc.c }),
+      h(Metric, { icon:'⏱', label:'Payback',        value:sc.payback?sc.payback+' tahun':'N/A', sub:'base case', c:sc.c }),
+      h(Metric, { icon:'📈', label:'IRR',            value:sc.irr?sc.irr+'%':'Negatif', sub:'25 tahun', c:sc.c }),
+      h(Metric, { icon:'🏭', label:'Total CAPEX',    value:'Rp '+((sc.capex+sc.plant)/1000).toFixed(0)+' M', sub:'pembangkit+infrastruktur', c:sc.c }),
+      h(Metric, { icon:'📊', label:'BEP',            value:bep?'Tahun '+bep:'Tidak tercapai', sub:'titik balik', c:sc.c })
+    ),
+
+    // TABS NAV
+    h('div', { style:{ display:'flex', padding:'0 32px',
+      borderBottom:'1px solid #1e293b', overflowX:'auto' } },
+      ...TABS.map(t => h('button', { key:t.id, onClick:()=>setTab(t.id), style:{
+        padding:'14px 18px', fontSize:12, fontWeight:600, whiteSpace:'nowrap',
+        color: tab===t.id ? sc.c : '#475569', background:'none', border:'none',
+        borderBottom: tab===t.id ? `2px solid ${sc.c}` : '2px solid transparent',
+        marginBottom:-1, transition:'color .15s'
+      } }, t.label))
+    ),
+
+    // TAB BODY
+    h('div', { style:{ padding:'28px 32px' } },
+      tab==='individual'  && h(TabInd,  { key:'i'+k, sc }),
+      tab==='compare'     && h(TabCmp,  { key:'compare' }),
+      tab==='annual'      && h(TabAnn,  { key:'a'+k, sc }),
+      tab==='sensitivity' && h(TabSens, { key:'sensitivity' })
+    ),
+
+    // FOOTER
+    h('div', { style:{ padding:'0 32px' } },
+      h('div', { style:{ borderTop:'1px solid #1e293b', paddingTop:16,
+        display:'flex', justifyContent:'space-between', flexWrap:'wrap', gap:8 } },
+        h('span', { style:{ ...S.mono, fontSize:10, color:'#334155' } },
+          'Semua angka adalah estimasi akademik — validasi lapangan diperlukan'),
+        h('span', { style:{ ...S.mono, fontSize:10, color:'#334155' } },
+          'Ref: RUPTL PLN 2025–2034 · Disbun KalTim 2023 · Otorita IKN 2024')
+      )
+    )
+  );
 }
 
-ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+createRoot(document.getElementById('root')).render(h(App));
 </script>
 </body>
 </html>
