@@ -4,10 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Simulasi BEP — Rantai Pasok Biomassa IKN</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.js"></script>
+  <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.2/babel.min.js"></script>
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.8.0/umd/Recharts.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <style>
@@ -29,11 +30,21 @@
 
   <script type="text/babel">
     const { useState, useEffect } = React;
-    const {
-      LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-      Legend, ReferenceLine, ResponsiveContainer,
-      AreaChart, Area, BarChart, Bar
-    } = Recharts;
+    // Recharts is loaded as UMD global via unpkg
+    const RC = window.Recharts;
+    const LineChart        = RC.LineChart;
+    const Line             = RC.Line;
+    const XAxis            = RC.XAxis;
+    const YAxis            = RC.YAxis;
+    const CartesianGrid    = RC.CartesianGrid;
+    const Tooltip          = RC.Tooltip;
+    const Legend           = RC.Legend;
+    const ReferenceLine    = RC.ReferenceLine;
+    const ResponsiveContainer = RC.ResponsiveContainer;
+    const AreaChart        = RC.AreaChart;
+    const Area             = RC.Area;
+    const BarChart         = RC.BarChart;
+    const Bar              = RC.Bar;
 
     // ── CONSTANTS ────────────────────────────────────────────
     const GWH_PER_YEAR = 240000;
