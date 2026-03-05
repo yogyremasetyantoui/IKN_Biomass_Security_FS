@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulasi BEP — Rantai Pasok Biomassa IKN</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=IBM+Plex+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #080f1e; color: #e2e8f0; font-family: 'Syne', sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    .fade-in { animation: fadeIn .35s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .sc-btn { transition: all .18s ease; cursor: pointer; border: none; font-family: 'IBM Plex Mono', monospace; }
+    .sc-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
+    .tab-btn { transition: all .15s ease; cursor: pointer; border: none; background: none; font-family: 'Syne', sans-serif; }
+    .tab-btn:hover { opacity: .8; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const {
+      LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      Legend, ReferenceLine, ResponsiveContainer,
+      AreaChart, Area, BarChart, Bar
+    } = Recharts;
+
+    // ── CONSTANTS ────────────────────────────────────────────
+    const GWH_PER_YEAR = 240000;
+    const PPA_PRICE    = 1450;
+
+    const SCENARIOS = [
+      { id:"S0", label:"S0 — Bulk Baseline",     color:"#ef4444", capex:0,     capexPlant:390000, opexPerYear:312000, lossRate:.30, note:"Tidak layak — biaya produksi > pendapatan PPA", viable:false, payback:null, irr:null,  kwhCost:4750 },
+      { id:"S1", label:"S1 — Centralized Hub",   color:"#f59e0b", capex:15000, capexPlant:390000, opexPerYear:244000, lossRate:.05, note:"Layak — 1 hub pelleting dekat IKN",             viable:true,  payback:13,   irr:13,    kwhCost:1850 },
+      { id:"S2", label:"S2 — Decentralized Hub", color:"#3b82f6", capex:12000, capexPlant:390000, opexPerYear:256000, lossRate:.08, note:"Layak — 3 hub terdesentralisasi, semi-kering",   viable:true,  payback:15,   irr:11,    kwhCost:2050 },
+      { id:"S3", label:"S3 — Hybrid Optimal",    color:"#10b981", capex:45000, capexPlant:390000, opexPerYear:235000, lossRate:.04, note:"Sangat layak — sistem terintegrasi, efisiensi tertinggi", viable:true, payback:11, irr:16, kwhCost:1620 },
+    ];
+
+    const REVENUE_PER_YEAR = (GWH_PER_YEAR * PPA_PRICE) / 1000;
+
+    function generateBEPData(scenario, years = 25) {
+      const data = [];
+      const totalCapex = scenario.capex + scenario.capexPlant;
+      let cumCost = totalCapex, cumRevenue = 0;
+      data.push({ year:0, cumCost:+(totalCapex/1000).toFixed(1), cumRevenue:0,
+        annualRevenue:0, annualCost:+(totalCapex/1000).toFixed(1),
+        cashflow:+(-totalCapex/1000).toFixed(1), cumCashflow:+(-totalCapex/1000).toFixed(1) });
+      for (let y = 1; y <= years; y++) {
+        cumCost += scenario.opexPerYear;
+        cumRevenue += REVENUE_PER_YEAR;
+        data.push({ year:y,
+          cumCost:+(cumCost/1000).toFixed(1), cumRevenue:+(cumRevenue/1000).toFixed(1),
+          annualRevenue:+(REVENUE_PER_YEAR/1000).toFixed(1), annualCost:+(scenario.opexPerYear/1000).toFixed(1),
+          cashflow:+((REVENUE_PER_YEAR-scenario.opexPerYear)/1000).toFixed(1),
+          cumCashflow:+((cumRevenue-cumCost)/1000).toFixed(1) });
+      }
+      return data;
+    }
+
+    function generateCompareData() {
+      const data = [];
+      for (let y = 0; y <= 25; y++) {
+        const row = { year: y };
+        SCENARIOS.forEach(s => {
+          const cap = s.capex + s.capexPlant;
+          row[s.id] = y === 0
+            ? +(-cap/1000).toFixed(1)
+            : +((REVENUE_PER_YEAR*y - cap - s.opexPerYear*y)/1000).toFixed(1);
+        });
+        data.push(row);
+      }
+      return data;
+    }
+
+    // ── TOOLTIP ──────────────────────────────────────────────
+    function BEPTooltip({ active, payload, label, scenario }) {
+      if (!active || !payload?.length) return null;
+      return (
+        <div style={{ background:"#0f172a", border:`1px solid ${scenario.color}55`,
+          borderRadius:8, padding:"12px 16px", fontFamily:"'IBM Plex Mono',monospace", fontSize:12 }}>
+          <p style={{ color:scenario.color, fontWeight:700, marginBottom:6 }}>Tahun ke-{label}</p>
+          {payload.map(p => (
+            <p key={p.dataKey} style={{ color:p.color, margin:"2px 0" }}>
+              {p.name}: <span style={{ color:"#fff" }}>Rp {p.value?.toLocaleString("id-ID")} M</span>
+            </p>
+          ))}
+        </div>
+      );
+    }
+
+    // ── METRIC CARD ──────────────────────────────────────────
+    function MetricCard({ label, value, sub, color, icon }) {
+      return (
+        <div style={{ background:"#0f172a", border:`1px solid ${color}33`, borderRadius:10,
+          padding:"14px 18px", flex:1, minWidth:130, position:"relative", overflow:"hidden" }}>
+          <div style={{ position:"absolute", top:0, left:0, right:0, height:2,
+            background:`linear-gradient(90deg,${color},transparent)` }} />
+          <div style={{ fontSize:20, marginBottom:4 }}>{icon}</div>
+          <div style={{ color:"#94a3b8", fontSize:10, fontFamily:"'IBM Plex Mono',monospace",
+            letterSpacing:1, textTransform:"uppercase" }}>{label}</div>
+          <div style={{ color, fontFamily:"'IBM Plex Mono',monospace", fontSize:18,
+            fontWeight:700, margin:"4px 0 2px" }}>{value}</div>
+          {sub && <div style={{ color:"#64748b", fontSize:10 }}>{sub}</div>}
+        </div>
+      );
+    }
+
+    // ── MAIN APP ─────────────────────────────────────────────
+    function App() {
+      const [active, setActive]   = useState(SCENARIOS[3]);
+      const [tab, setTab]         = useState("individual");
+      const [animKey, setAnimKey] = useState(0);
+
+      useEffect(() => { setAnimKey(k => k + 1); }, [active]);
+
+      const bepData     = generateBEPData(active);
+      const compareData = generateCompareData();
+      const bepYear     = active.viable ? bepData.find(d => d.cumCashflow >= 0)?.year : null;
+
+      const tabs = [
+        { key:"individual",  label:"Analisis per Skenario" },
+        { key:"compare",     label:"Perbandingan 4 Skenario" },
+        { key:"annual",      label:"Arus Kas Tahunan" },
+        { key:"sensitivity", label:"Sensitivitas Harga PPA" },
+      ];
+
+      return (
+        <div style={{ background:"#080f1e", minHeight:"100vh", color:"#e2e8f0",
+          fontFamily:"'Syne',sans-serif", paddingBottom:40 }}>
+
+          {/* HEADER */}
+          <div style={{ background:"linear-gradient(135deg,#0d1f3c,#0a1628 60%,#080f1e)",
+            borderBottom:"1px solid #1e293b", padding:"28px 32px 22px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", flexWrap:"wrap", gap:16 }}>
+              <div>
+                <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#10b981",
+                  letterSpacing:3, textTransform:"uppercase", marginBottom:8 }}>
+                  Studi Kelayakan · Rantai Pasok Biomassa IKN
+                </div>
+                <h1 style={{ fontSize:26, fontWeight:800, lineHeight:1.2, color:"#f1f5f9" }}>
+                  Simulasi Break-Even Point
+                </h1>
+                <p style={{ color:"#64748b", fontSize:13, marginTop:6, fontFamily:"'IBM Plex Mono',monospace" }}>
+                  PLTB 30 MW · 240 GWh/tahun · PPA Rp 1.450/kWh · Horizon 25 Tahun
+                </p>
+              </div>
+              <div style={{ background:"#0f172a", border:"1px solid #1e3a5f",
+                borderRadius:10, padding:"10px 18px", textAlign:"right" }}>
+                <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:9, color:"#475569", letterSpacing:2 }}>KAPASITAS TARGET</div>
+                <div style={{ fontSize:22, fontWeight:800, color:"#10b981" }}>30 MW</div>
+                <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#3b82f6" }}>IKN · Kalimantan Timur</div>
+              </div>
+            </div>
+
+            {/* SCENARIO BUTTONS */}
+            <div style={{ display:"flex", gap:10, marginTop:22, flexWrap:"wrap" }}>
+              {SCENARIOS.map(s => (
+                <button key={s.id} className="sc-btn" onClick={() => setActive(s)}
+                  style={{ padding:"8px 18px", borderRadius:8,
+                    border:`1.5px solid ${active.id===s.id ? s.color : "#1e293b"}`,
+                    background: active.id===s.id ? `${s.color}18` : "#0f172a",
+                    color: active.id===s.id ? s.color : "#64748b",
+                    fontSize:11, fontWeight:700, letterSpacing:.5 }}>
+                  {s.id==="S0"?"⚠ ":s.id==="S3"?"★ ":"● "}{s.id}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* METRICS */}
+          <div className="fade-in" key={`m${animKey}`}
+            style={{ display:"flex", gap:12, padding:"20px 32px", flexWrap:"wrap", borderBottom:"1px solid #1e293b" }}>
+            <MetricCard icon="💰" label="Biaya Produksi"   value={`Rp ${active.kwhCost.toLocaleString("id-ID")}`} sub="per kWh (avg)"          color={active.color} />
+            <MetricCard icon="📉" label="Loss Rate"        value={`${(active.lossRate*100).toFixed(0)}%`}          sub="total rantai pasok"     color={active.color} />
+            <MetricCard icon="⏱" label="Payback Period"   value={active.payback?`${active.payback} tahun`:"N/A"}  sub="estimasi base case"     color={active.color} />
+            <MetricCard icon="📈" label="IRR Estimasi"     value={active.irr?`${active.irr}%`:"Negatif"}           sub="selama 25 tahun"        color={active.color} />
+            <MetricCard icon="🏭" label="Total CAPEX"      value={`Rp ${((active.capex+active.capexPlant)/1000).toFixed(0)} M`} sub="pembangkit + infrastruktur" color={active.color} />
+            <MetricCard icon="📊" label="BEP di"           value={bepYear?`Tahun ${bepYear}`:"Tidak tercapai"}    sub="titik balik kumulatif"  color={active.color} />
+          </div>
+
+          {/* TABS */}
+          <div style={{ display:"flex", padding:"0 32px", borderBottom:"1px solid #1e293b", overflowX:"auto" }}>
+            {tabs.map(t => (
+              <button key={t.key} className="tab-btn" onClick={() => setTab(t.key)}
+                style={{ padding:"14px 18px", fontSize:12, fontWeight:600, whiteSpace:"nowrap",
+                  color: tab===t.key ? active.color : "#475569",
+                  borderBottom: tab===t.key ? `2px solid ${active.color}` : "2px solid transparent",
+                  marginBottom:-1 }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ padding:"28px 32px" }}>
+
+            {/* TAB: INDIVIDUAL */}
+            {tab === "individual" && (
+              <div className="fade-in" key={`i${animKey}`}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center",
+                  marginBottom:20, flexWrap:"wrap", gap:10 }}>
+                  <div>
+                    <h2 style={{ fontSize:18, fontWeight:700, color:active.color }}>{active.label}</h2>
+                    <p style={{ color:"#64748b", fontSize:12, marginTop:4 }}>{active.note}</p>
+                  </div>
+                  {!active.viable && (
+                    <div style={{ background:"#450a0a", border:"1px solid #ef444466", borderRadius:8,
+                      padding:"8px 16px", fontFamily:"'IBM Plex Mono',monospace", fontSize:11, color:"#fca5a5" }}>
+                      ⚠ TIDAK LAYAK — Biaya produksi &gt; tarif PPA
+                    </div>
+                  )}
+                </div>
+
+                {/* Cumulative chart */}
+                <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12,
+                  padding:"20px 24px", marginBottom:20 }}>
+                  <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#475569",
+                    letterSpacing:2, marginBottom:16, textTransform:"uppercase" }}>
+                    Pendapatan Kumulatif vs Biaya Kumulatif (Rp Miliar)
+                  </div>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={bepData} margin={{ top:10, right:30, left:10, bottom:10 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="year" stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        label={{ value:"Tahun Operasi", position:"insideBottom", offset:-4, fill:"#475569", fontSize:11 }} />
+                      <YAxis stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        tickFormatter={v => `${v.toLocaleString("id-ID")}M`} />
+                      <Tooltip content={<BEPTooltip scenario={active} />} />
+                      <Legend wrapperStyle={{ fontSize:12, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
+                      {bepYear && (
+                        <ReferenceLine x={bepYear} stroke={active.color} strokeDasharray="6 3" strokeWidth={1.5}
+                          label={{ value:`BEP Th.${bepYear}`, position:"top", fill:active.color, fontSize:11, fontFamily:"IBM Plex Mono" }} />
+                      )}
+                      <ReferenceLine y={0} stroke="#334155" strokeWidth={1} />
+                      <Line name="Pendapatan Kumulatif" dataKey="cumRevenue"
+                        stroke="#10b981" strokeWidth={2.5} dot={false} activeDot={{ r:5 }} />
+                      <Line name="Biaya Kumulatif" dataKey="cumCost"
+                        stroke={active.color} strokeWidth={2.5} dot={false}
+                        strokeDasharray={active.id==="S0" ? "8 4" : "0"} activeDot={{ r:5 }} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Cumulative cashflow area */}
+                <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12, padding:"20px 24px" }}>
+                  <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#475569",
+                    letterSpacing:2, marginBottom:16, textTransform:"uppercase" }}>
+                    Arus Kas Kumulatif Bersih (Rp Miliar)
+                  </div>
+                  <ResponsiveContainer width="100%" height={220}>
+                    <AreaChart data={bepData} margin={{ top:10, right:30, left:10, bottom:10 }}>
+                      <defs>
+                        <linearGradient id="cfGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%"  stopColor={active.color} stopOpacity={0.3} />
+                          <stop offset="95%" stopColor={active.color} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="year" stroke="#334155" tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }} />
+                      <YAxis stroke="#334155" tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        tickFormatter={v => `${v.toLocaleString("id-ID")}M`} />
+                      <Tooltip content={<BEPTooltip scenario={active} />} />
+                      <ReferenceLine y={0} stroke="#ef444488" strokeWidth={1.5} strokeDasharray="4 2" />
+                      {bepYear && <ReferenceLine x={bepYear} stroke={active.color} strokeDasharray="6 3" strokeWidth={1.5} />}
+                      <Area name="Cashflow Kumulatif" dataKey="cumCashflow"
+                        stroke={active.color} strokeWidth={2} fill="url(#cfGrad)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: COMPARE */}
+            {tab === "compare" && (
+              <div className="fade-in" key="compare">
+                <h2 style={{ fontSize:18, fontWeight:700, marginBottom:6, color:"#f1f5f9" }}>
+                  Perbandingan Cashflow Kumulatif — 4 Skenario
+                </h2>
+                <p style={{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
+                  Nilai di atas nol = kumulatif untung · Titik crossing nol = Break-Even Point
+                </p>
+                <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12,
+                  padding:"20px 24px", marginBottom:20 }}>
+                  <ResponsiveContainer width="100%" height={360}>
+                    <LineChart data={compareData} margin={{ top:10, right:30, left:10, bottom:20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                      <XAxis dataKey="year" stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        label={{ value:"Tahun Operasi", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
+                      <YAxis stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        tickFormatter={v => `${v.toLocaleString("id-ID")}M`} />
+                      <Tooltip formatter={(v, name) => [`Rp ${v?.toLocaleString("id-ID")} M`, name]}
+                        contentStyle={{ background:"#0f172a", border:"1px solid #334155",
+                          fontFamily:"IBM Plex Mono", fontSize:11 }}
+                        labelStyle={{ color:"#94a3b8" }} />
+                      <Legend wrapperStyle={{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
+                      <ReferenceLine y={0} stroke="#475569" strokeWidth={1.5} strokeDasharray="5 3" />
+                      {SCENARIOS.map(s => (
+                        <Line key={s.id} name={s.label} dataKey={s.id}
+                          stroke={s.color} strokeWidth={s.id==="S3"?3:2}
+                          dot={false} activeDot={{ r:4 }}
+                          strokeDasharray={s.id==="S0"?"8 4":"0"} />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* BEP cards */}
+                <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))", gap:12 }}>
+                  {SCENARIOS.map(s => {
+                    const d = generateBEPData(s);
+                    const bep = d.find(x => x.cumCashflow >= 0)?.year;
+                    const cf25 = d[25]?.cumCashflow;
+                    return (
+                      <div key={s.id} style={{ background:"#0b1120", borderRadius:10, padding:16,
+                        borderTop:`3px solid ${s.color}`, border:`1px solid ${s.color}33` }}>
+                        <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:11,
+                          color:s.color, fontWeight:700, marginBottom:10 }}>{s.label}</div>
+                        {[["BEP", bep?`Tahun ${bep}`:"Tidak tercapai"],
+                          ["CF Th.25", cf25?`Rp ${cf25.toLocaleString("id-ID")} M`:"—"],
+                          ["IRR",  s.irr?`${s.irr}%`:"Negatif"],
+                          ["Loss", `${(s.lossRate*100).toFixed(0)}%`]
+                        ].map(([k,v]) => (
+                          <div key={k} style={{ display:"flex", justifyContent:"space-between", marginBottom:4 }}>
+                            <span style={{ color:"#475569", fontFamily:"IBM Plex Mono", fontSize:10 }}>{k}</span>
+                            <span style={{ color:s.viable?"#e2e8f0":"#ef4444",
+                              fontFamily:"IBM Plex Mono", fontSize:10, fontWeight:700 }}>{v}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* TAB: ANNUAL */}
+            {tab === "annual" && (
+              <div className="fade-in" key={`a${animKey}`}>
+                <h2 style={{ fontSize:18, fontWeight:700, marginBottom:6, color:active.color }}>{active.label}</h2>
+                <p style={{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
+                  Arus kas tahunan bersih: Pendapatan PPA dikurangi OPEX per tahun
+                </p>
+                <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12,
+                  padding:"20px 24px", marginBottom:16 }}>
+                  <ResponsiveContainer width="100%" height={340}>
+                    <BarChart data={bepData.slice(1)} margin={{ top:10, right:30, left:10, bottom:20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <XAxis dataKey="year" stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        label={{ value:"Tahun Operasi", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
+                      <YAxis stroke="#334155"
+                        tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                        tickFormatter={v => `${v}M`} />
+                      <Tooltip contentStyle={{ background:"#0f172a", border:"1px solid #334155",
+                          fontFamily:"IBM Plex Mono", fontSize:11 }}
+                        formatter={(v, n) => [`Rp ${v?.toLocaleString("id-ID")} M`, n]}
+                        labelStyle={{ color:"#94a3b8" }} />
+                      <Legend wrapperStyle={{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
+                      <Bar name="Pendapatan Tahunan" dataKey="annualRevenue"
+                        fill="#10b98122" stroke="#10b981" strokeWidth={1} radius={[3,3,0,0]} />
+                      <Bar name="Biaya Operasional" dataKey="annualCost"
+                        fill={`${active.color}22`} stroke={active.color} strokeWidth={1} radius={[3,3,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+
+                {/* Surplus pills */}
+                <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12, padding:"20px 24px" }}>
+                  <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#475569",
+                    letterSpacing:2, marginBottom:14, textTransform:"uppercase" }}>
+                    Surplus / Defisit Tahunan (Rp Miliar)
+                  </div>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                    {bepData.slice(1).map(d => {
+                      const isPos = d.cashflow >= 0;
+                      return (
+                        <div key={d.year} style={{ background:isPos?"#052e16":"#450a0a",
+                          border:`1px solid ${isPos?"#10b98144":"#ef444444"}`,
+                          borderRadius:6, padding:"6px 10px", minWidth:62, textAlign:"center" }}>
+                          <div style={{ fontFamily:"IBM Plex Mono", fontSize:9, color:"#475569" }}>Th.{d.year}</div>
+                          <div style={{ fontFamily:"IBM Plex Mono", fontSize:10, fontWeight:700,
+                            color:isPos?"#10b981":"#ef4444" }}>
+                            {isPos?"+":""}{d.cashflow?.toLocaleString("id-ID")}M
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TAB: SENSITIVITY */}
+            {tab === "sensitivity" && (() => {
+              const ppaPrices = [1100, 1200, 1300, 1350, 1450, 1550, 1650, 1800, 1900];
+              const sensData = ppaPrices.map(ppa => {
+                const row = { ppa };
+                SCENARIOS.filter(s => s.viable).forEach(s => {
+                  const rev = (GWH_PER_YEAR * ppa) / 1000;
+                  const cap = s.capex + s.capexPlant;
+                  row[s.id] = rev > s.opexPerYear
+                    ? Math.min(Math.ceil(cap / (rev - s.opexPerYear)), 26)
+                    : 27;
+                });
+                return row;
+              });
+              return (
+                <div className="fade-in" key="sensitivity">
+                  <h2 style={{ fontSize:18, fontWeight:700, marginBottom:6, color:"#f1f5f9" }}>
+                    Sensitivitas BEP terhadap Harga PPA (Rp/kWh)
+                  </h2>
+                  <p style={{ color:"#64748b", fontSize:12, marginBottom:20, fontFamily:"'IBM Plex Mono',monospace" }}>
+                    Variasi PPA Rp 1.100–1.900/kWh · Garis merah = baseline Rp 1.450/kWh
+                  </p>
+                  <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12,
+                    padding:"20px 24px", marginBottom:20 }}>
+                    <div style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#475569",
+                      letterSpacing:2, marginBottom:16, textTransform:"uppercase" }}>
+                      BEP Tahun ke-N berdasarkan Harga PPA
+                    </div>
+                    <ResponsiveContainer width="100%" height={300}>
+                      <LineChart data={sensData} margin={{ top:10, right:30, left:10, bottom:20 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                        <XAxis dataKey="ppa" stroke="#334155"
+                          tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                          tickFormatter={v => `Rp ${v}`}
+                          label={{ value:"Harga PPA (Rp/kWh)", position:"insideBottom", offset:-8, fill:"#475569", fontSize:11 }} />
+                        <YAxis stroke="#334155"
+                          tick={{ fill:"#64748b", fontSize:11, fontFamily:"IBM Plex Mono" }}
+                          domain={[0,28]} tickFormatter={v => v > 25 ? ">25" : v} />
+                        <Tooltip contentStyle={{ background:"#0f172a", border:"1px solid #334155",
+                            fontFamily:"IBM Plex Mono", fontSize:11 }}
+                          formatter={v => [v > 25 ? "Tidak tercapai" : `Tahun ${v}`, ""]}
+                          labelFormatter={v => `PPA: Rp ${v}/kWh`}
+                          labelStyle={{ color:"#94a3b8" }} />
+                        <Legend wrapperStyle={{ fontSize:11, fontFamily:"IBM Plex Mono", color:"#94a3b8", paddingTop:12 }} />
+                        <ReferenceLine x={1450} stroke="#ef4444" strokeDasharray="6 3" strokeWidth={1.5}
+                          label={{ value:"Baseline", position:"top", fill:"#ef4444", fontSize:10, fontFamily:"IBM Plex Mono" }} />
+                        <ReferenceLine y={25} stroke="#334155" strokeDasharray="4 2" strokeWidth={1} />
+                        {SCENARIOS.filter(s => s.viable).map(s => (
+                          <Line key={s.id} name={s.label} dataKey={s.id}
+                            stroke={s.color} strokeWidth={2.5} dot={{ r:3, fill:s.color }} />
+                        ))}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+
+                  {/* Sensitivity table */}
+                  <div style={{ background:"#0b1120", border:"1px solid #1e293b", borderRadius:12, overflowX:"auto" }}>
+                    <table style={{ width:"100%", borderCollapse:"collapse" }}>
+                      <thead>
+                        <tr style={{ background:"#0d1f3c" }}>
+                          <th style={{ padding:"12px 16px", textAlign:"left",
+                            fontFamily:"IBM Plex Mono", fontSize:11, color:"#64748b",
+                            fontWeight:500, borderBottom:"1px solid #1e293b" }}>PPA (Rp/kWh)</th>
+                          {SCENARIOS.filter(s => s.viable).map(s => (
+                            <th key={s.id} style={{ padding:"12px 16px", textAlign:"center",
+                              fontFamily:"IBM Plex Mono", fontSize:11, color:s.color,
+                              fontWeight:700, borderBottom:"1px solid #1e293b" }}>{s.id}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {ppaPrices.map((ppa, ri) => (
+                          <tr key={ppa} style={{
+                            background: ppa===1450 ? "#1e293b" : ri%2===0 ? "#090f1b" : "#0b1120",
+                            borderLeft: ppa===1450 ? "3px solid #ef4444" : "3px solid transparent" }}>
+                            <td style={{ padding:"10px 16px", fontFamily:"IBM Plex Mono", fontSize:11,
+                              color: ppa===1450 ? "#ef4444" : "#94a3b8",
+                              fontWeight: ppa===1450 ? 700 : 400 }}>
+                              Rp {ppa.toLocaleString("id-ID")}{ppa===1450?" ← baseline":""}
+                            </td>
+                            {SCENARIOS.filter(s => s.viable).map(s => {
+                              const rev = (GWH_PER_YEAR * ppa) / 1000;
+                              const cap = s.capex + s.capexPlant;
+                              const bepY = rev > s.opexPerYear ? Math.ceil(cap/(rev-s.opexPerYear)) : null;
+                              const ok = bepY && bepY <= 25;
+                              return (
+                                <td key={s.id} style={{ padding:"10px 16px", textAlign:"center",
+                                  fontFamily:"IBM Plex Mono", fontSize:11,
+                                  color: ok ? s.color : "#475569",
+                                  fontWeight: ok ? 700 : 400 }}>
+                                  {ok ? `Th. ${bepY}` : ">25 th"}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* FOOTER */}
+          <div style={{ padding:"0 32px" }}>
+            <div style={{ borderTop:"1px solid #1e293b", paddingTop:16,
+              display:"flex", justifyContent:"space-between", flexWrap:"wrap", gap:8 }}>
+              <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#334155" }}>
+                Semua angka adalah estimasi akademik — validasi lapangan diperlukan
+              </span>
+              <span style={{ fontFamily:"'IBM Plex Mono',monospace", fontSize:10, color:"#334155" }}>
+                Ref: RUPTL PLN 2025–2034 · Disbun KalTim 2023 · Otorita IKN 2024
+              </span>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
